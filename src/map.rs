@@ -1,12 +1,21 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::hash::{BuildHasher, Hash};
-use std::sync::atomic::{AtomicIsize, AtomicUsize};
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::ops::Deref;
+use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
+use std::sync::Mutex;
+use seize::{Collector, Guard};
 use crate::entry::Entry;
-use crate::reclaim::Atomic;
+use crate::reclaim::{Atomic, Shared};
 
-
+macro_rules! load_factor {
+    ($n: expr) => {
+        // ¾ n = n - n/4 = n - (n >> 2)
+        $n - ($n >> 2)
+    };
+}
 
 pub struct Map<K, V, S = crate::DefaultHashBuilder> {
     read: Atomic<ReadOnly<K, V>>,
@@ -15,6 +24,7 @@ pub struct Map<K, V, S = crate::DefaultHashBuilder> {
     flag_ctl: AtomicIsize,
     build_hasher: S,
     collector: Collector,
+    lock: Mutex<()>
 
 }
 
@@ -94,6 +104,7 @@ impl<K, V, S> Map<K, V, S> {
     ///
     /// ```
     ///
+    /// use syncmap::DefaultHashBuilder;
     /// use syncmap::map::Map;
     /// let map = Map::with_hasher(DefaultHashBuilder::default());
     /// map.pin().insert(1, 2);
@@ -106,6 +117,7 @@ impl<K, V, S> Map<K, V, S> {
             flag_ctl: AtomicIsize::new(0),
             build_hasher: hash_builder,
             collector: Collector::new(),
+            lock: Mutex::new(())
         }
     }
 
@@ -159,6 +171,129 @@ impl<K, V, S> Map<K, V, S> {
                 self.flag_ctl.store(flag, Ordering::SeqCst);
                 break table;
             }
+        }
+    }
+}
+
+impl<K, V, S> Map<K, V, S>
+    where
+        K: Clone + Hash + Ord,
+        S: BuildHasher,
+{
+    #[inline]
+    fn hash<Q: ?Sized + Hash>(&self, key: &Q) -> u64 {
+        let mut h = self.build_hasher.build_hasher();
+        key.hash(&mut h);
+        h.finish()
+    }
+
+    /// Returns a reference to the value corresponding to the key.
+    ///
+    /// The key may be any borrowed form of the map's key type, but
+    /// [`Hash`] and [`Ord`] on the borrowed form *must* match those for
+    /// the key type.
+    ///
+    /// [`Ord`]: std::cmp::Ord
+    /// [`Hash`]: std::hash::Hash
+    ///
+    /// To obtain a `Guard`, use [`HashMap::guard`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use flurry::HashMap;
+    /// use syncmap::Map;
+    /// use syncmap::map::Map;
+    ///
+    /// let map = Map::new();
+    /// let mref = map.pin();
+    /// mref.insert(1, "a");
+    /// assert_eq!(mref.get(&1), Some(&"a"));
+    /// assert_eq!(mref.get(&2), None);
+    /// ```
+    #[inline]
+    pub fn get<'g, Q>(&'g self, key: &Q, guard: &'g Guard<'_>) -> Option<&'g V>
+        where
+            K: Borrow<Q>,
+            Q: ?Sized + Hash + Ord,
+    {
+        self.check_guard(guard);
+
+        let read = self.read.load(Ordering::SeqCst, guard);
+        if read.is_null() {
+            return None;
+        }
+        let r = unsafe { read.deref() };
+        let mut e = r.m.get(&key);
+        if e.is_none() && r.amended {
+            let lock = self.lock.lock();
+            let read = self.read.load(Ordering::SeqCst, guard);
+            let r = unsafe { read.deref() };
+            e = r.m.get(&key);
+            if e.is_none() && r.amended {
+                let dirty = self.dirty.load(Ordering::SeqCst, guard);
+                e = unsafe { dirty.deref() }.get(&key);
+                self.miss_locked(guard);
+            }
+            drop(lock)
+        }
+        if e.is_none() {
+            return None;
+        }
+
+        /*  let v = unsafe { Box::from_raw(e.unwrap().as_mut().unwrap()) };
+          let p = v.p.load(Ordering::SeqCst, &guard);
+          if p.is_null() {
+              return None;
+          }
+          if let Some(p) = unsafe {p.as_ref()} {
+              let v = &**p;
+              return Some(v)
+          }*/
+        unsafe { e.unwrap().as_ref().unwrap().load(guard) }
+    }
+
+
+    fn miss_locked<'g>(&'g self, guard: &'g Guard) {
+        self.misses.fetch_add(1, Ordering::SeqCst);
+        let miss = self.misses.load(Ordering::SeqCst);
+        let dirty = self.dirty.load(Ordering::SeqCst, guard);
+        if dirty.is_null() {
+            return;
+        }
+        if miss < unsafe { dirty.deref() }.len() {
+            return;
+        }
+        let mut map = HashMap::new();
+
+        for (key, value) in unsafe { dirty.deref() }.deref() {
+            map.insert(key.clone(), *value);
+        }
+        let readOnluMap = Shared::boxed(ReadOnly {
+            m: map,
+            amended: false,
+        }, &self.collector);
+        let read = self.read.load(Ordering::SeqCst, guard);
+        self.read.compare_exchange(read, readOnluMap, Ordering::AcqRel, Ordering::Acquire, guard);
+        let old_map = self.dirty.load(Ordering::SeqCst, guard);
+        if !old_map.is_null() {
+            self.dirty.store(Shared::boxed(HashMap::new(), &self.collector), Ordering::SeqCst);
+        }
+        self.misses.compare_exchange(self.misses.load(Ordering::SeqCst), 0, Ordering::AcqRel, Ordering::Acquire);
+    }
+}
+
+
+struct ReadOnly<K, V> {
+    m: HashMap<K, *mut Entry<V>>,
+    amended: bool,
+}
+
+impl<K, V> ReadOnly<K, V> {
+    fn new() -> Self <> {
+        Self {
+            m: HashMap::new(),
+            amended: false,
         }
     }
 }
