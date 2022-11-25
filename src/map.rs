@@ -510,13 +510,13 @@ mod tests {
 
         let map1 = map.clone();
         let t1 = std::thread::spawn(move || {
-            for i in 0..500 {
+            for i in 0..5000 {
                 map1.insert(i, 0, &map1.guard());
             }
         });
         let map2 = map.clone();
         let t2 = std::thread::spawn(move || {
-            for i in 0..500 {
+            for i in 0..5000 {
                 map2.insert(i, 1, &map2.guard());
             }
         });
@@ -527,7 +527,7 @@ mod tests {
         thread::sleep(Duration::from_micros(1000));
         let mut missed = 0;
         let guard = map.guard();
-        for i in 0..500 {
+        for i in 0..5000 {
             let v = map.get(&i, &guard);
             if v.is_some() {
                 assert!(v == Some(&0) || v == Some(&1));
