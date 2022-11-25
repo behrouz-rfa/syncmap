@@ -344,8 +344,8 @@ impl<K, V, S> Map<K, V, S>
                 }
             }
 
-
-            //TODO need to load readonlu again
+            let lock = self.lock.lock();
+            // TODO need to load readonlu again
             match read.m.get(&key) {
                 Some(e) => {
                     if unsafe { e.as_ref().unwrap() }.unexpunge_locked(guard) {
@@ -366,8 +366,8 @@ impl<K, V, S> Map<K, V, S>
                     if !d.is_empty() {
                         if let Some(e) = d.get(&key) {
                             unsafe { e.as_ref() }.unwrap().store_locked(entry_value, guard);
-
-                            return;
+                            drop(lock);
+                            break;
                         }
                     }
 
@@ -385,8 +385,8 @@ impl<K, V, S> Map<K, V, S>
                             amended: true,
                         }, &self.collector);
                         self.read.store(shard_map, Ordering::SeqCst);
-
-                        return;
+                        drop(lock);
+                        break;
                     }
                     let dirty2 = self.dirty.load(Ordering::SeqCst, guard);
                     if dirty != dirty2 {
@@ -406,7 +406,7 @@ impl<K, V, S> Map<K, V, S>
                 }
             }
 
-
+            drop(lock);
             break;
         }
     }
@@ -484,5 +484,61 @@ impl<K, V> ReadOnly<K, V> {
             m: HashMap::new(),
             amended: false,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+    use rayon;
+    use rayon::prelude::*;
+
+    use crate::reclaim::Shared;
+    use super::*;
+
+    const ITER: u64 = 32 * 1024;
+
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_insert() {
+        let map = Arc::new(Map::<usize, usize>::new());
+
+        let map1 = map.clone();
+        let t1 = std::thread::spawn(move || {
+            for i in 0..500 {
+                map1.insert(i, 0, &map1.guard());
+            }
+        });
+        let map2 = map.clone();
+        let t2 = std::thread::spawn(move || {
+            for i in 0..500 {
+                map2.insert(i, 1, &map2.guard());
+            }
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
+
+        thread::sleep(Duration::from_micros(1000));
+        let mut missed = 0;
+        let guard = map.guard();
+        for i in 0..500 {
+            let v = map.get(&i, &guard);
+            if v.is_some() {
+                assert!(v == Some(&0) || v == Some(&1));
+            } else {
+                missed += 1;
+            }
+
+            // let kv = map.get_key_value(&i, &guard).unwrap();
+            // assert!(kv == (&i, &0) || kv == (&i, &1));
+        }
+
+        println!("missed {}", missed)
     }
 }
