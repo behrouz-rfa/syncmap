@@ -514,10 +514,9 @@ impl<K, V, S> Map<K, V, S>
     ///
     /// use syncmap::map::Map;
     /// let map = Map::new();
-    ///
-    /// map.pin().insert(1, "a");
-    /// map.pin().clear();
-    /// assert!(map.pin().is_empty());
+    /// let guard = map.guard();
+    /// map.insert(1, "a",&guard);
+    /// map.clear(&guard);
     /// ```
     pub fn clear<'g>(&'g self, guard: &'g Guard<'_>) {
         let lock = self.lock.lock();
