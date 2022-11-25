@@ -1,10 +1,13 @@
 [package]
+authors = ["Behrouz <behrouz.r.fa@gmail.com>"]
 name = "syncmap"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
+homepage = "https://github.com/behrouz-rfa/syncmap"
+repository = "https://github.com/behrouz-rfa/syncmap"
+documentation = "https://github.com/behrouz-rfa/syncmap"
 [dependencies]
 hashbrown = "0.13.1"
 serde = { version = "1.0.126", features = ["derive"] }
