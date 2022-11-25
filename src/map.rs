@@ -24,8 +24,7 @@ pub struct Map<K, V, S = crate::DefaultHashBuilder> {
     flag_ctl: AtomicIsize,
     build_hasher: S,
     collector: Collector,
-    lock: Mutex<()>
-
+    lock: Mutex<()>,
 }
 
 impl<K, V, S> fmt::Debug for Map<K, V, S>
@@ -117,7 +116,7 @@ impl<K, V, S> Map<K, V, S> {
             flag_ctl: AtomicIsize::new(0),
             build_hasher: hash_builder,
             collector: Collector::new(),
-            lock: Mutex::new(())
+            lock: Mutex::new(()),
         }
     }
 
@@ -282,6 +281,7 @@ impl<K, V, S> Map<K, V, S>
         self.misses.compare_exchange(self.misses.load(Ordering::SeqCst), 0, Ordering::AcqRel, Ordering::Acquire);
     }
 }
+
 impl<K, V, S> Map<K, V, S>
     where
         K: Sync + Send + Clone + Hash + Ord,
@@ -419,7 +419,6 @@ impl<K, V, S> Map<K, V, S>
         let read = self.read.load(Ordering::SeqCst, guard);
         let mut map = HashMap::with_capacity(unsafe { read.deref() }.m.len());
         for (key, value) in &unsafe { read.deref() }.m {
-
             if !unsafe { value.as_ref().unwrap() }.try_unexpunge_locked(guard) {
                 map.insert(key.clone(), *value);
             }
@@ -443,7 +442,38 @@ impl<K, V, S> Map<K, V, S>
     }
 }
 
-    struct ReadOnly<K, V> {
+impl<K, V, S> Map<K, V, S>
+    where
+        K: Clone + Ord,
+{
+    /// Clears the map, removing all key-value pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// use syncmap::map::Map;
+    /// let map = Map::new();
+    ///
+    /// map.pin().insert(1, "a");
+    /// map.pin().clear();
+    /// assert!(map.pin().is_empty());
+    /// ```
+    pub fn clear<'g>(&'g self, guard: &'g Guard<'_>) {
+        let lock = self.lock.lock();
+
+        self.dirty.store(Shared::boxed(HashMap::new(), &self.collector), Ordering::SeqCst);
+        let read = self.read.load(Ordering::SeqCst, guard);
+        self.read.store(Shared::boxed(ReadOnly::new(), &self.collector), Ordering::SeqCst);
+        let sc = self.misses.load(Ordering::SeqCst);
+        self.misses.compare_exchange(sc, 0, Ordering::AcqRel, Ordering::Acquire).expect("change miess");
+
+        drop(lock);
+    }
+}
+
+
+struct ReadOnly<K, V> {
     m: HashMap<K, *mut Entry<V>>,
     amended: bool,
 }
