@@ -411,6 +411,72 @@ impl<K, V, S> Map<K, V, S>
         }
     }
 
+
+    /// Removes a key-value pair from the map, and returns the removed value (if any).
+    ///
+    /// The key may be any borrowed form of the map's key type, but
+    /// [`Hash`] and [`Ord`] on the borrowed form *must* match those for
+    /// the key type.
+    ///
+    /// [`Ord`]: std::cmp::Ord
+    /// [`Hash`]: std::hash::Hash
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// use syncmap::map::Map;
+    /// let map = Map::new();
+    /// map.insert(1, "a",&map.guard());
+    /// assert_eq!(map.remove(&1,&map.guard()), Some(&"a"));
+    /// assert_eq!(map.remove(&1,&map.guard()), None);
+    /// ```
+    pub fn remove<'g, Q>(&'g self, key: &Q, guard: &'g Guard<'_>) -> Option<&'g V>
+        where
+            K: Borrow<Q>,
+            Q: ?Sized + Hash + Ord,
+    {
+        // NOTE: _technically_, this method shouldn't require the thread-safety bounds, but a) that
+        // would require special-casing replace_node for when new_value.is_none(), and b) it's sort
+        // of useless to call remove on a collection that you know you can never insert into.
+        self.check_guard(guard);
+
+        let mut read = self.read.load(Ordering::SeqCst, guard);
+        loop {
+            if read.is_null() {
+                break None;
+            }
+
+            let r = unsafe { read.deref() };
+            let mut e = r.m.get(&key);
+            let mut  remove_el:Option<*mut Entry<V>> = None;
+            if e.is_none() && r.amended {
+                let lock = self.lock.lock();
+                let read = self.read.load(Ordering::SeqCst, guard);
+                let r = unsafe { read.deref() };
+                e = r.m.get(&key);
+                if e.is_none() && r.amended {
+                    let dirty = self.dirty.load(Ordering::SeqCst, guard);
+                    e = unsafe { dirty.deref() }.get(&key);
+
+                    let dirty = unsafe { dirty.as_ptr() };
+                    remove_el = unsafe { dirty.as_mut().unwrap().remove(&key) };
+
+                    self.miss_locked(guard);
+                }
+                drop(lock)
+            }
+
+            if remove_el.is_some() {
+              break   unsafe{remove_el.unwrap().as_mut().unwrap().remove(guard)};
+
+            }
+            break None;
+        }
+
+
+    }
+
     fn dirty_locked<'g>(&'g self, key: K, entry_value: Shared<V>, guard: &Guard<'_>) {
         let dirty = self.dirty.load(Ordering::SeqCst, guard);
         if dirty.is_null() {
@@ -433,13 +499,7 @@ impl<K, V, S> Map<K, V, S>
         map.insert(key, Box::into_raw(Box::new(entry)));
         self.dirty.store(Shared::boxed(map, &self.collector), Ordering::SeqCst)
     }
-    pub fn del<'g, Q>(&'g self, key: &Q, guard: &'g Guard<'_>) -> Option<&'g V>
-        where
-            K: Borrow<Q>,
-            Q: ?Sized + Hash + Ord,
-    {
-        None
-    }
+
 }
 
 impl<K, V, S> Map<K, V, S>
@@ -502,6 +562,15 @@ mod tests {
 
     const ITER: u64 = 32 * 1024;
 
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn remove_and_insert() {
+        let map = Arc::new(Map::<usize, usize>::new());
+        let guard = map.guard();
+        map.insert(1,1,&guard);
+        assert_eq!(map.remove(&1,&guard),Some(&1));
+        assert_eq!(map.remove(&1,&guard),None)
+    }
 
     #[test]
     #[cfg_attr(miri, ignore)]

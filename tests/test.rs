@@ -1,5 +1,3 @@
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9,7 +7,6 @@ mod tests {
     use rayon;
     use rayon::prelude::*;
     use syncmap::map::Map;
-
 
 
     const ITER: u64 = 32 * 1024;

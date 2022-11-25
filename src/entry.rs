@@ -19,6 +19,21 @@ impl<V> Entry<V>
             expunged: Atomic::null(),
         }
     }
+    pub fn remove<'g>(&'g self, guard: &'g Guard<'_>) -> Option<&'g V> {
+        let item = self.p.load(Ordering::SeqCst, guard);
+        if item.is_null() /*TODO || self.p == self.expunged*/ {
+            return None;
+        }
+        if let Ok(v) = self.p.compare_exchange(item, Shared::null(), Ordering::AcqRel, Ordering::Acquire, guard) {
+            if let Some(v) = unsafe { item.as_ref() } {
+                let v = &**v;
+
+                return Some(v);
+            }
+        }
+
+        return None;
+    }
     pub fn load<'g>(&'g self, guard: &'g Guard<'_>) -> Option<&'g V> {
         let item = self.p.load(Ordering::SeqCst, guard);
         if item.is_null() /*TODO || self.p == self.expunged*/ {
