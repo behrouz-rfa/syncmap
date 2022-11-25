@@ -434,7 +434,13 @@ impl<K, V, S> Map<K, V, S>
         map.insert(key, Box::into_raw(Box::new(entry)));
         self.dirty.store(Shared::boxed(map, &self.collector), Ordering::SeqCst)
     }
-
+    pub fn del<'g, Q>(&'g self, key: &Q, guard: &'g Guard<'_>) -> Option<&'g V>
+        where
+            K: Borrow<Q>,
+            Q: ?Sized + Hash + Ord,
+    {
+        None
+    }
 }
 
     struct ReadOnly<K, V> {
