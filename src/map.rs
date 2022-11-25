@@ -282,9 +282,162 @@ impl<K, V, S> Map<K, V, S>
         self.misses.compare_exchange(self.misses.load(Ordering::SeqCst), 0, Ordering::AcqRel, Ordering::Acquire);
     }
 }
+impl<K, V, S> Map<K, V, S>
+    where
+        K: Sync + Send + Clone + Hash + Ord,
+        V: Sync + Send,
+        S: BuildHasher,
+{
+    /// Inserts a key-value pair into the map.
+    ///
+    /// If the map did not have this key present, [`None`] is returned.
+    ///
+    /// If the map did have this key present, the value is updated, and the old
+    /// value is returned. The key is left unchanged. See the [std-collections
+    /// documentation] for more.
+    ///
+    /// [`None`]: std::option::Option::None
+    /// [std-collections documentation]: https://doc.rust-lang.org/std/collections/index.html#insert-and-complex-keys
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// use syncmap::map::Map;
+    /// let map = Map::new();
+    /// assert_eq!(map.pin().insert(37, "a"), None);
+    /// assert_eq!(map.pin().is_empty(), false);
+    ///
+    /// // you can also re-use a map pin like so:
+    /// let mref = map.pin();
+    ///
+    /// mref.insert(37, "b");
+    /// assert_eq!(mref.insert(37, "c"), Some(&"b"));
+    /// assert_eq!(mref.get(&37), Some(&"c"));
+    /// ```
+    pub fn insert<'g>(&'g self, key: K, value: V, guard: &'g Guard<'_>) {
+        self.check_guard(guard);
+        self.put(key, value, false, guard)
+    }
+
+    fn put<'g>(
+        &'g self,
+        mut key: K,
+        value: V,
+        no_replacement: bool,
+        guard: &'g Guard<'_>,
+    ) {
+        let mut table = self.read.load(Ordering::SeqCst, guard);
+        let entry_value = Shared::boxed(value, &self.collector);
+        loop {
+            if table.is_null() {
+                table = self.init_table(guard);
+                continue;
+            }
+
+            let read = unsafe { table.deref() };
 
 
-struct ReadOnly<K, V> {
+            if let Some(v) = read.m.get(&key) {
+                if unsafe { v.as_ref().unwrap() }.try_store(entry_value, guard) {
+                    return;
+                }
+            }
+
+
+            //TODO need to load readonlu again
+            match read.m.get(&key) {
+                Some(e) => {
+                    if unsafe { e.as_ref().unwrap() }.unexpunge_locked(guard) {
+                        // The entry was previously expunged, which implies that there is a
+                        // non-nil dirty map and this entry is not in it.
+                        let mut table = self.read.load(Ordering::SeqCst, guard);
+                        unsafe {
+                            let read = table.as_ptr();
+                            let read = read.as_mut().unwrap();
+                            read
+                        }.m.insert(key.clone(), *e);
+                    }
+                    unsafe { e.as_ref().unwrap() }.store_locked(entry_value, guard);
+                }
+                None => {
+                    let dirty = self.dirty.load(Ordering::SeqCst, guard);
+                    let d = unsafe { dirty.deref() };
+                    if !d.is_empty() {
+                        if let Some(e) = d.get(&key) {
+                            unsafe { e.as_ref() }.unwrap().store_locked(entry_value, guard);
+
+                            return;
+                        }
+                    }
+
+                    if !read.amended {
+                        // We're adding the first new key to the dirty map.
+                        // Make sure it is allocated and mark the read-only map as incomplete.
+                        self.dirty_locked(key, entry_value, guard);
+                        let shard = self.read.load(Ordering::SeqCst, guard);
+                        let mut map = HashMap::new();
+                        for (key, value) in &unsafe { shard.deref() }.m {
+                            map.insert(key.clone(), *value);
+                        }
+                        let shard_map = Shared::boxed(ReadOnly {
+                            m: map,
+                            amended: true,
+                        }, &self.collector);
+                        self.read.store(shard_map, Ordering::SeqCst);
+
+                        return;
+                    }
+                    let dirty2 = self.dirty.load(Ordering::SeqCst, guard);
+                    if dirty != dirty2 {
+                        continue;
+                    }
+                    //save entry;
+                    let mut entry = Entry {
+                        p: Atomic::null(),
+                        expunged: Atomic::null(),
+                    };
+
+                    entry.p.store(entry_value, Ordering::SeqCst);
+                    unsafe {
+                        let dirty2 = dirty2.as_ptr();
+                        dirty2.as_mut().unwrap().insert(key.clone(), Box::into_raw(Box::new(entry)));
+                    };
+                }
+            }
+
+
+            break;
+        }
+    }
+
+    fn dirty_locked<'g>(&'g self, key: K, entry_value: Shared<V>, guard: &Guard<'_>) {
+        let dirty = self.dirty.load(Ordering::SeqCst, guard);
+        if dirty.is_null() {
+            return;
+        }
+        let read = self.read.load(Ordering::SeqCst, guard);
+        let mut map = HashMap::with_capacity(unsafe { read.deref() }.m.len());
+        for (key, value) in &unsafe { read.deref() }.m {
+
+            if !unsafe { value.as_ref().unwrap() }.try_unexpunge_locked(guard) {
+                map.insert(key.clone(), *value);
+            }
+        }
+        let entry = Entry {
+            p: Atomic::null(),
+            expunged: Atomic::null(),
+        };
+
+        entry.p.store(entry_value, Ordering::SeqCst);
+
+        map.insert(key, Box::into_raw(Box::new(entry)));
+        self.dirty.store(Shared::boxed(map, &self.collector), Ordering::SeqCst)
+    }
+
+}
+
+    struct ReadOnly<K, V> {
     m: HashMap<K, *mut Entry<V>>,
     amended: bool,
 }
