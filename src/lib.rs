@@ -1,5 +1,6 @@
 mod reclaim;
 mod entry;
+pub mod map;
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right
