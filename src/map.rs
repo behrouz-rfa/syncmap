@@ -16,7 +16,15 @@ macro_rules! load_factor {
         $n - ($n >> 2)
     };
 }
-
+///Map is like a  Hashmap but is safe for concurrent use by multiple thread without additional locking or coordination.
+/// Loads, stores, and deletes run in amortized constant time.
+///The Map type is specialized. Most code should use a plain Rust HashMap instead, with separate locking or coordination, f
+/// or better type safety and to make it easier to maintain other invariants along with the map content.
+///The Map type is optimized for two common use cases: (1) when the entry for a given key is
+/// only ever written once but read many times, as in caches that only grow, or (2) when
+/// multiple thread read, write, and overwrite entries for disjoint sets of keys. In these two cases,
+/// use of a Map may significantly reduce lock contention compared to a Rust HashMap paired with a
+/// separate Mutex
 pub struct Map<K, V, S = crate::DefaultHashBuilder> {
     read: Atomic<ReadOnly<K, V>>,
     dirty: Atomic<HashMap<K, *mut Entry<V>>>,
@@ -449,7 +457,7 @@ impl<K, V, S> Map<K, V, S>
 
             let r = unsafe { read.deref() };
             let mut e = r.m.get(&key);
-            let mut  remove_el:Option<*mut Entry<V>> = None;
+            let mut remove_el: Option<*mut Entry<V>> = None;
             if e.is_none() && r.amended {
                 let lock = self.lock.lock();
                 let read = self.read.load(Ordering::SeqCst, guard);
@@ -468,13 +476,10 @@ impl<K, V, S> Map<K, V, S>
             }
 
             if remove_el.is_some() {
-              break   unsafe{remove_el.unwrap().as_mut().unwrap().remove(guard)};
-
+                break unsafe { remove_el.unwrap().as_mut().unwrap().remove(guard) };
             }
             break None;
         }
-
-
     }
 
     fn dirty_locked<'g>(&'g self, key: K, entry_value: Shared<V>, guard: &Guard<'_>) {
@@ -499,7 +504,6 @@ impl<K, V, S> Map<K, V, S>
         map.insert(key, Box::into_raw(Box::new(entry)));
         self.dirty.store(Shared::boxed(map, &self.collector), Ordering::SeqCst)
     }
-
 }
 
 impl<K, V, S> Map<K, V, S>
@@ -566,9 +570,9 @@ mod tests {
     fn remove_and_insert() {
         let map = Arc::new(Map::<usize, usize>::new());
         let guard = map.guard();
-        map.insert(1,1,&guard);
-        assert_eq!(map.remove(&1,&guard),Some(&1));
-        assert_eq!(map.remove(&1,&guard),None)
+        map.insert(1, 1, &guard);
+        assert_eq!(map.remove(&1, &guard), Some(&1));
+        assert_eq!(map.remove(&1, &guard), None)
     }
 
     #[test]
