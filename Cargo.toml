@@ -8,6 +8,10 @@ edition = "2021"
 homepage = "https://github.com/behrouz-rfa/syncmap"
 repository = "https://github.com/behrouz-rfa/syncmap"
 documentation = "https://github.com/behrouz-rfa/syncmap"
+
+
+keywords = ["hashmap", "syn","map"]
+
 [dependencies]
 hashbrown = "0.13.1"
 serde = { version = "1.0.126", features = ["derive"] }
