@@ -38,3 +38,10 @@ features = ["xxh3", "const_xxh3"]
 [dependencies.ahash]
 version = "0.7.6"
 default-features = false
+
+
+[[bench]]
+name = "syncmap_dashmap"
+harness = false
+
+

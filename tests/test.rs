@@ -10,6 +10,7 @@ mod tests {
 
 
     const ITER: u64 = 32 * 1024;
+    const ITER2: usize = 32 * 1024;
 
 
     #[test]
@@ -17,26 +18,39 @@ mod tests {
     fn concurrent_insert() {
         let map = Arc::new(Map::<usize, usize>::new());
 
-        let map1 = map.clone();
-        let t1 = std::thread::spawn(move || {
-            for i in 0..5000 {
-                map1.insert(i, 0, &map1.guard());
-            }
-        });
-        let map2 = map.clone();
-        let t2 = std::thread::spawn(move || {
-            for i in 0..5000 {
-                map2.insert(i, 1, &map2.guard());
-            }
-        });
 
-        t1.join().unwrap();
-        t2.join().unwrap();
+        let handles: Vec<_> = (0..20).map(|_| {
+            let map1 = map.clone();
+            thread::spawn(move || {
+                let guard = map1.guard();
+                for i in 0..ITER2 {
+                    map1.insert(i, 0, &guard);
+                }
+            })
+        }).collect();
+
+        let handles2: Vec<_> = (0..20).map(|_| {
+            let map1 = map.clone();
+            thread::spawn(move || {
+                let guard = map1.guard();
+                for i in 0..ITER2 {
+                    map1.insert(i, 0, &guard);
+                }
+            })
+        }).collect();
+
+        for h in handles {
+            h.join().unwrap()
+        }
+        for h in handles2 {
+            h.join().unwrap()
+        }
+
 
         thread::sleep(Duration::from_micros(1000));
         let mut missed = 0;
         let guard = map.guard();
-        for i in 0..5000 {
+        for i in 0..ITER2 {
             let v = map.get(&i, &guard);
             if v.is_some() {
                 assert!(v == Some(&0) || v == Some(&1));
@@ -48,6 +62,7 @@ mod tests {
             // assert!(kv == (&i, &0) || kv == (&i, &1));
         }
 
-        println!("missed {}", missed)
+        println!("missed {}", missed);
+        println!("cpu {}", num_cpus::get())
     }
 }
