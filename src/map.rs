@@ -56,11 +56,10 @@ impl<K, V, S> Clone for Map<K, V, S>
         let mut cloned_map = Map::with_hasher(self.build_hasher.clone());
 
         {
-
             cloned_map.dirty = self.dirty.clone();
             cloned_map.read = self.read.clone();
-            cloned_map.misses =AtomicUsize::new(self.misses.load(Ordering::SeqCst));
-            cloned_map.flag_ctl =AtomicIsize::new(self.flag_ctl.load(Ordering::SeqCst));
+            cloned_map.misses = AtomicUsize::new(self.misses.load(Ordering::SeqCst));
+            cloned_map.flag_ctl = AtomicIsize::new(self.flag_ctl.load(Ordering::SeqCst));
 
             // let dirty = self.dirty.load(Ordering::SeqCst, &guard);
             // if !dirty.is_null() {
@@ -101,9 +100,9 @@ impl<K, V, S> Default for Map<K, V, S>
     }
 }
 
-impl<K,V,S> Drop for Map<K,V,S> {
+impl<K, V, S> Drop for Map<K, V, S> {
     fn drop(&mut self) {
-        let guard = unsafe {Guard::unprotected()};
+        let guard = unsafe { Guard::unprotected() };
 
         // let read = self.read.swap(Shared::null(), Ordering::SeqCst, &guard);
         // assert!(
@@ -240,11 +239,11 @@ impl<K, V, S> Map<K, V, S>
     /// ```
     pub fn len(&self) -> usize {
         let guard = self.guard();
-        let map  = self.dirty.load(Ordering::SeqCst,&guard);
-       if map.is_null() {
-           return 0;
-       }
-        unsafe {map.deref()}.len()
+        let map = self.dirty.load(Ordering::SeqCst, &guard);
+        if map.is_null() {
+            return 0;
+        }
+        unsafe { map.deref() }.len()
     }
 
     /// Returns a reference to the value corresponding to the key.

@@ -9,7 +9,10 @@ homepage = "https://github.com/behrouz-rfa/syncmap"
 repository = "https://github.com/behrouz-rfa/syncmap"
 documentation = "https://github.com/behrouz-rfa/syncmap"
 
-
+description = """
+syncmap is a fast, concurrent cache library built with a focus on performance and correctness.
+The motivation to build syncmap comes from the sync.Map in Golang.
+"""
 keywords = ["hashmap", "syn","map"]
 
 [dependencies]
