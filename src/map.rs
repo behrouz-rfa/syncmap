@@ -56,15 +56,19 @@ impl<K, V, S> Clone for Map<K, V, S>
         let mut cloned_map = Map::with_hasher(self.build_hasher.clone());
 
         {
-            let guard = self.collector.enter();
-            let cloned_guard = cloned_map.collector.enter();
-            let dirty = self.dirty.load(Ordering::SeqCst, &guard);
-            if !dirty.is_null() {
-                for (key, value) in unsafe { dirty.deref() }.deref() {
-                    let value = unsafe { (value.as_ref().unwrap()).p.load(Ordering::SeqCst, &guard).deref().deref() };
-                    cloned_map.insert(key.clone(), value.clone(), &cloned_guard)
-                }
-            }
+
+            cloned_map.dirty = self.dirty.clone();
+            cloned_map.read = self.read.clone();
+            cloned_map.misses =AtomicUsize::new(self.misses.load(Ordering::SeqCst));
+            cloned_map.flag_ctl =AtomicIsize::new(self.flag_ctl.load(Ordering::SeqCst));
+
+            // let dirty = self.dirty.load(Ordering::SeqCst, &guard);
+            // if !dirty.is_null() {
+            //     for (key, value) in unsafe { dirty.deref() }.deref() {
+            //         let value = unsafe { (value.as_ref().unwrap()).p.load(Ordering::SeqCst, &guard).deref().deref() };
+            //         cloned_map.insert(key.clone(), value.clone(), &cloned_guard)
+            //     }
+            // }
         }
         cloned_map
     }
@@ -96,6 +100,33 @@ impl<K, V, S> Default for Map<K, V, S>
         Self::with_hasher(S::default())
     }
 }
+
+impl<K,V,S> Drop for Map<K,V,S> {
+    fn drop(&mut self) {
+        let guard = unsafe {Guard::unprotected()};
+
+        // let read = self.read.swap(Shared::null(), Ordering::SeqCst, &guard);
+        // assert!(
+        //     !read.is_null(),
+        //     "self.moved is initialized together with the table"
+        // );
+        //
+        // // safety: we have mut access to self, so no-one else will drop this value under us.
+        // let read = unsafe { read.into_box() };
+        // drop(read);
+
+        let moved = self.dirty.swap(Shared::null(), Ordering::SeqCst, &guard);
+        assert!(
+            !moved.is_null(),
+            "self.moved is initialized together with the table"
+        );
+
+        // safety: we have mut access to self, so no-one else will drop this value under us.
+        let moved = unsafe { moved.into_box() };
+        drop(moved);
+    }
+}
+
 
 impl<K, V, S> Map<K, V, S> {
     /// Creates an empty map which will use `hash_builder` to hash keys.
@@ -194,6 +225,28 @@ impl<K, V, S> Map<K, V, S>
         h.finish()
     }
 
+    /// Returns the number of entries in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use syncmap::map::Map;
+    ///
+    /// let map = Map::new();
+    ///
+    /// map.pin().insert(1, "a");
+    /// map.pin().insert(2, "b");
+    /// assert!(map.len() == 2);
+    /// ```
+    pub fn len(&self) -> usize {
+        let guard = self.guard();
+        let map  = self.dirty.load(Ordering::SeqCst,&guard);
+       if map.is_null() {
+           return 0;
+       }
+        unsafe {map.deref()}.len()
+    }
+
     /// Returns a reference to the value corresponding to the key.
     ///
     /// The key may be any borrowed form of the map's key type, but
@@ -208,15 +261,13 @@ impl<K, V, S> Map<K, V, S>
     /// # Examples
     ///
     /// ```
-    /// use flurry::HashMap;
-    /// use syncmap::Map;
-    /// use syncmap::map::Map;
     ///
+    /// use syncmap::map::Map;
     /// let map = Map::new();
-    /// let mref = map.pin();
-    /// mref.insert(1, "a");
-    /// assert_eq!(mref.get(&1), Some(&"a"));
-    /// assert_eq!(mref.get(&2), None);
+    /// let guard = map.guard();
+    /// map.insert(1,"a",&guard);
+    /// assert_eq!(map.get(&1,&guard), Some(&"a"));
+    /// assert_eq!(map.get(&2,&guard), None);
     /// ```
     #[inline]
     pub fn get<'g, Q>(&'g self, key: &Q, guard: &'g Guard<'_>) -> Option<&'g V>
@@ -313,16 +364,8 @@ impl<K, V, S> Map<K, V, S>
     ///
     /// use syncmap::map::Map;
     /// let map = Map::new();
-    /// assert_eq!(map.pin().insert(37, "a"), None);
-    /// assert_eq!(map.pin().is_empty(), false);
-    ///
-    /// // you can also re-use a map pin like so:
-    /// let mref = map.pin();
-    ///
-    /// mref.insert(37, "b");
-    /// assert_eq!(mref.insert(37, "c"), Some(&"b"));
-    /// assert_eq!(mref.get(&37), Some(&"c"));
-    /// ```
+    /// let guard = map.guard();
+    /// map.insert(1,1,&guard)
     pub fn insert<'g>(&'g self, key: K, value: V, guard: &'g Guard<'_>) {
         self.check_guard(guard);
         self.put(key, value, false, guard)
@@ -460,8 +503,7 @@ impl<K, V, S> Map<K, V, S>
             let mut remove_el: Option<*mut Entry<V>> = None;
             if e.is_none() && r.amended {
                 let lock = self.lock.lock();
-                let read = self.read.load(Ordering::SeqCst, guard);
-                let r = unsafe { read.deref() };
+
                 e = r.m.get(&key);
                 if e.is_none() && r.amended {
                     let dirty = self.dirty.load(Ordering::SeqCst, guard);

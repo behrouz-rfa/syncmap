@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::ptr;
 use std::sync::atomic::Ordering;
-use seize::Guard;
+use seize::{AtomicPtr, Guard};
 use crate::reclaim::{Atomic, Shared};
 
 #[derive(Clone)]
@@ -9,6 +9,7 @@ pub struct Entry<V> {
     pub(crate) p: Atomic<V>,
     pub(crate) expunged: Atomic<V>,
 }
+
 
 impl<V> Entry<V>
 
@@ -21,7 +22,7 @@ impl<V> Entry<V>
     }
     pub fn remove<'g>(&'g self, guard: &'g Guard<'_>) -> Option<&'g V> {
         let item = self.p.load(Ordering::SeqCst, guard);
-        if item.is_null() /*TODO || self.p == self.expunged*/ {
+        if item.is_null() /*TODO || self.p == self.EXPUNGED*/ {
             return None;
         }
         if let Ok(v) = self.p.compare_exchange(item, Shared::null(), Ordering::AcqRel, Ordering::Acquire, guard) {
@@ -36,7 +37,7 @@ impl<V> Entry<V>
     }
     pub fn load<'g>(&'g self, guard: &'g Guard<'_>) -> Option<&'g V> {
         let item = self.p.load(Ordering::SeqCst, guard);
-        if item.is_null() /*TODO || self.p == self.expunged*/ {
+        if item.is_null() /*TODO || self.p == self.EXPUNGED*/ {
             return None;
         }
         if let Some(v) = unsafe { item.as_ref() } {
@@ -51,10 +52,11 @@ impl<V> Entry<V>
     pub(crate) fn try_store<'g>(&'g self, value: Shared<V>, guard: &'g Guard<'_>) -> bool {
         loop {
             let load = self.p.load(Ordering::SeqCst, guard);
+
             if load == self.expunged.load(Ordering::SeqCst, guard) {
                 return false;
             }
-            if let Ok(_) = self.p.compare_exchange(load, value, Ordering::AcqRel, Ordering::Acquire, guard) {
+            if self.p.compare_exchange(load, value, Ordering::AcqRel, Ordering::Acquire, guard).is_ok() {
                 return true;
             }
         }
@@ -78,10 +80,15 @@ impl<V> Entry<V>
 
 
     pub(crate) fn store_locked<'g>(&'g self, value: Shared<V>, guard: &'g Guard<'_>) {
-        self.p.store(value, Ordering::SeqCst);
+
+        self.p.swap(value, Ordering::SeqCst,guard);
     }
 }
 
 
-
+impl<V> Drop for Entry<V> {
+    fn drop(&mut self) {
+        println!("drop entry ")
+    }
+}
 

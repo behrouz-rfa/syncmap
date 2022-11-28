@@ -64,7 +64,7 @@ fn task_insert_syncmap_u64_u64_guard_once(threads: usize) -> Map<u64, u64> {
 
     rayon::scope(|s| {
         for t in 1..=(threads as u64) {
-            let m = map.clone();
+            let m = Arc::clone(&map);
             s.spawn(move |_| {
                 let start = t * inc;
                 let guard = m.guard();
@@ -138,7 +138,9 @@ fn get_syncmap_u64_u64_guard_every_it(c: &mut Criterion) {
 criterion_group!(
     benches,
     insert_syncmap_u64_u64_guard_every_it,
-    get_syncmap_u64_u64_guard_every_it,
+    // insert_syncmap_u64_u64_guard_every_it,
+
+    // get_syncmap_u64_u64_guard_every_it,
 
 );
 criterion_main!(benches);
