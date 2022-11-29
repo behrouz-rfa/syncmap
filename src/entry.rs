@@ -88,7 +88,9 @@ impl<V> Entry<V>
 
 impl<V> Drop for Entry<V> {
     fn drop(&mut self) {
-        println!("drop entry ")
+        unsafe {
+            //let _ = Box::into_raw(self.p.load())
+        }
     }
 }
 

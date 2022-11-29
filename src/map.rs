@@ -115,6 +115,9 @@ impl<K, V, S> Drop for Map<K, V, S> {
         // drop(read);
 
         let moved = self.dirty.swap(Shared::null(), Ordering::SeqCst, &guard);
+        if moved.is_null() {
+            return;
+        }
         assert!(
             !moved.is_null(),
             "self.moved is initialized together with the table"
@@ -281,15 +284,19 @@ impl<K, V, S> Map<K, V, S>
             return None;
         }
         let r = unsafe { read.deref() };
-        let mut e = r.m.get(&key);
+        let mut e = r.m.get(key);
         if e.is_none() && r.amended {
             let lock = self.lock.lock();
             let read = self.read.load(Ordering::SeqCst, guard);
             let r = unsafe { read.deref() };
-            e = r.m.get(&key);
+            e = r.m.get(key);
             if e.is_none() && r.amended {
                 let dirty = self.dirty.load(Ordering::SeqCst, guard);
-                e = unsafe { dirty.deref() }.get(&key);
+                if dirty.is_null() {
+                    drop(lock);
+                    return None;
+                }
+                e = unsafe { dirty.deref() }.get(key);
                 self.miss_locked(guard);
             }
             drop(lock)
@@ -312,8 +319,8 @@ impl<K, V, S> Map<K, V, S>
 
 
     fn miss_locked<'g>(&'g self, guard: &'g Guard) {
-        self.misses.fetch_add(1, Ordering::SeqCst);
-        let miss = self.misses.load(Ordering::SeqCst);
+        let miss = self.misses.fetch_add(1, Ordering::SeqCst);
+
         let dirty = self.dirty.load(Ordering::SeqCst, guard);
         if dirty.is_null() {
             return;
@@ -326,17 +333,16 @@ impl<K, V, S> Map<K, V, S>
         for (key, value) in unsafe { dirty.deref() }.deref() {
             map.insert(key.clone(), *value);
         }
-        let readOnluMap = Shared::boxed(ReadOnly {
+        let read_only_map = Shared::boxed(ReadOnly {
             m: map,
             amended: false,
         }, &self.collector);
-        let read = self.read.load(Ordering::SeqCst, guard);
-        self.read.compare_exchange(read, readOnluMap, Ordering::AcqRel, Ordering::Acquire, guard);
+        self.read.store( read_only_map, Ordering::SeqCst);
         let old_map = self.dirty.load(Ordering::SeqCst, guard);
         if !old_map.is_null() {
-            self.dirty.store(Shared::boxed(HashMap::new(), &self.collector), Ordering::SeqCst);
+            self.dirty.compare_exchange(old_map,Shared::null(), Ordering::AcqRel,Ordering::Acquire,guard);
         }
-        self.misses.compare_exchange(self.misses.load(Ordering::SeqCst), 0, Ordering::AcqRel, Ordering::Acquire);
+        self.misses.store(0, Ordering::SeqCst);
     }
 }
 
@@ -412,6 +418,10 @@ impl<K, V, S> Map<K, V, S>
                 }
                 None => {
                     let dirty = self.dirty.load(Ordering::SeqCst, guard);
+                    if dirty.is_null() {
+                        panic!("diry null check")
+                    }
+                    // TODO: check the dirty is null here
                     let d = unsafe { dirty.deref() };
                     if !d.is_empty() {
                         if let Some(e) = d.get(&key) {
@@ -498,26 +508,37 @@ impl<K, V, S> Map<K, V, S>
             }
 
             let r = unsafe { read.deref() };
-            let mut e = r.m.get(&key);
             let mut remove_el: Option<*mut Entry<V>> = None;
+            let mut e = r.m.get(&key);
             if e.is_none() && r.amended {
                 let lock = self.lock.lock();
 
                 e = r.m.get(&key);
                 if e.is_none() && r.amended {
                     let dirty = self.dirty.load(Ordering::SeqCst, guard);
+                    if dirty.is_null() {
+                        read = self.read.load(Ordering::SeqCst, guard);
+                        drop(lock);
+                        continue;
+                    }
                     e = unsafe { dirty.deref() }.get(&key);
 
                     let dirty = unsafe { dirty.as_ptr() };
+
                     remove_el = unsafe { dirty.as_mut().unwrap().remove(&key) };
 
                     self.miss_locked(guard);
                 }
                 drop(lock)
+            }else {
+                if let Some(e) = e {
+                  return  unsafe { e.as_mut().unwrap().remove(guard) };
+                }
             }
 
             if remove_el.is_some() {
-                break unsafe { remove_el.unwrap().as_mut().unwrap().remove(guard) };
+                let data = unsafe { remove_el.unwrap().as_mut().unwrap().remove(guard) };
+                break data;
             }
             break None;
         }

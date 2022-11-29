@@ -23,7 +23,7 @@ use syncmap::map::{Map};
 
 
 /* DASHMAP */
-const ITER: u64 = 32 ;
+const ITER: u64 = 32;
 
 fn task_insert_syncmap_u64_u64_guard_every_it() -> Map<u64, u64> {
     let map = Map::new();
@@ -38,10 +38,9 @@ fn task_insert_syncmap_u64_u64_guard_every_it() -> Map<u64, u64> {
 fn insert_syncmap_u64_u64_guard_every_it(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_syncmap_u64_u64_guard_every_it");
     group.throughput(Throughput::Elements(ITER as u64));
-    let max = 2 ;
+    let max = 2;
 
     for threads in 1..max {
-
         group.bench_with_input(
             BenchmarkId::from_parameter(threads),
             &threads,
@@ -59,7 +58,7 @@ fn insert_syncmap_u64_u64_guard_every_it(c: &mut Criterion) {
 }
 
 fn task_insert_syncmap_u64_u64_guard_once(threads: usize) -> Map<u64, u64> {
-    let mut map =  Arc::new(Map::new());
+    let mut map = Arc::new(Map::new());
     let inc = ITER / (threads as u64);
 
     rayon::scope(|s| {
@@ -69,7 +68,6 @@ fn task_insert_syncmap_u64_u64_guard_once(threads: usize) -> Map<u64, u64> {
                 let start = t * inc;
                 let guard = m.guard();
                 for i in start..(start + inc) {
-
                     m.insert(i, i + 7, &guard);
                 }
             });
@@ -81,7 +79,7 @@ fn task_insert_syncmap_u64_u64_guard_once(threads: usize) -> Map<u64, u64> {
 fn insert_syncmap_u64_u64_guard_once(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_syncmap_u64_u64_guard_once");
     group.throughput(Throughput::Elements(ITER as u64));
-    let max =2;
+    let max = 2;
 
     for threads in 1..=max {
         group.bench_with_input(
@@ -103,7 +101,7 @@ fn insert_syncmap_u64_u64_guard_once(c: &mut Criterion) {
 fn task_get_syncmap_u64_u64_guard_every_it(map: &Map<u64, u64>) {
     (0..ITER).into_par_iter().for_each(|i| {
         let guard = map.guard();
-        let item =  map.get(&i, &guard);
+        let item = map.get(&i, &guard);
         if item.is_some() {
             assert_eq!(item, Some(&(i + 7)));
         }
@@ -113,7 +111,7 @@ fn task_get_syncmap_u64_u64_guard_every_it(map: &Map<u64, u64>) {
 fn get_syncmap_u64_u64_guard_every_it(c: &mut Criterion) {
     let mut group = c.benchmark_group("get_syncmap_u64_u64_guard_every_it");
     group.throughput(Throughput::Elements(ITER as u64));
-    let max = 2;
+    let max = 3;
     for threads in 1..=max {
         let map = task_insert_syncmap_u64_u64_guard_every_it();
 
@@ -137,9 +135,9 @@ fn get_syncmap_u64_u64_guard_every_it(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    insert_syncmap_u64_u64_guard_every_it,
     // insert_syncmap_u64_u64_guard_every_it,
-
+    // insert_syncmap_u64_u64_guard_every_it,
+get_syncmap_u64_u64_guard_every_it
     // get_syncmap_u64_u64_guard_every_it,
 
 );
