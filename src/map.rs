@@ -419,7 +419,11 @@ impl<K, V, S> Map<K, V, S>
                 None => {
                     let dirty = self.dirty.load(Ordering::SeqCst, guard);
                     if dirty.is_null() {
-                        panic!("diry null check")
+                        table = self.read.load(Ordering::SeqCst, guard);
+                        let m = Shared::boxed(HashMap::new(), &self.collector);
+                        self.dirty.store(m, Ordering::SeqCst);
+                        drop(lock);
+                        continue;
                     }
                     // TODO: check the dirty is null here
                     let d = unsafe { dirty.deref() };
