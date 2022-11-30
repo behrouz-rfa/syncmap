@@ -151,7 +151,8 @@ impl<K, V, S> Map<K, V, S> {
     /// use syncmap::DefaultHashBuilder;
     /// use syncmap::map::Map;
     /// let map = Map::with_hasher(DefaultHashBuilder::default());
-    /// map.pin().insert(1, 2);
+    ///   let guard = map.guard();
+    /// map.insert(1, 2,&guard);
     /// ```
     pub fn with_hasher(hash_builder: S) -> Self {
         Self {
@@ -239,9 +240,9 @@ impl<K, V, S> Map<K, V, S>
     /// use syncmap::map::Map;
     ///
     /// let map = Map::new();
-    ///
-    /// map.pin().insert(1, "a");
-    /// map.pin().insert(2, "b");
+    /// let guard = map.guard();
+    /// map.insert(1, "a",&guard);
+    /// map.insert(2, "b",&guard);
     /// assert!(map.len() == 2);
     /// ```
     pub fn len(&self) -> usize {
