@@ -113,7 +113,11 @@ impl<K, V, S> Drop for Map<K, V, S> {
         // // safety: we have mut access to self, so no-one else will drop this value under us.
         // let read = unsafe { read.into_box() };
         // drop(read);
-
+         let read = self.read.swap(Shared::null(), Ordering::SeqCst, &guard);
+        if !read.is_null() {
+            let read = unsafe { read.into_box() };
+            drop(read);
+        }
         let moved = self.dirty.swap(Shared::null(), Ordering::SeqCst, &guard);
         if moved.is_null() {
             return;
@@ -337,10 +341,10 @@ impl<K, V, S> Map<K, V, S>
             m: map,
             amended: false,
         }, &self.collector);
-        self.read.store( read_only_map, Ordering::SeqCst);
+        self.read.store(read_only_map, Ordering::SeqCst);
         let old_map = self.dirty.load(Ordering::SeqCst, guard);
         if !old_map.is_null() {
-            self.dirty.compare_exchange(old_map,Shared::null(), Ordering::AcqRel,Ordering::Acquire,guard);
+            self.dirty.compare_exchange(old_map, Shared::null(), Ordering::AcqRel, Ordering::Acquire, guard);
         }
         self.misses.store(0, Ordering::SeqCst);
     }
@@ -534,9 +538,9 @@ impl<K, V, S> Map<K, V, S>
                     self.miss_locked(guard);
                 }
                 drop(lock)
-            }else {
+            } else {
                 if let Some(e) = e {
-                  return  unsafe { e.as_mut().unwrap().remove(guard) };
+                    return unsafe { e.as_mut().unwrap().remove(guard) };
                 }
             }
 

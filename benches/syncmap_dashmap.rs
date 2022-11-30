@@ -111,7 +111,7 @@ fn task_get_syncmap_u64_u64_guard_every_it(map: &Map<u64, u64>) {
 fn get_syncmap_u64_u64_guard_every_it(c: &mut Criterion) {
     let mut group = c.benchmark_group("get_syncmap_u64_u64_guard_every_it");
     group.throughput(Throughput::Elements(ITER as u64));
-    let max = 3;
+    let max = 6;
     for threads in 1..=max {
         let map = task_insert_syncmap_u64_u64_guard_every_it();
 
